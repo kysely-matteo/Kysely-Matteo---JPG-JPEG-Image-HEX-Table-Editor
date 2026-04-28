@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QTABLE // JPEG HEX GLITCH EDITOR</title>
+<style>
+  :root {
+    --green: #00aaff;
+    --green-dim: #0066cc;
+    --green-glow: rgba(0,170,255,0.15);
+    --amber: #ffaa00;
+    --red: #ff3355;
+    --bg: #03060f;
+    --panel: #060c1a;
+    --border: #102040;
+    --text: #a0ccff;
+    --text-dim: #305070;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Courier New', Courier, 'Lucida Console', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+    position: relative;
+  }
+
+  /* scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* CRT vignette */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.7) 100%);
+    pointer-events: none;
+    z-index: 9998;
+  }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    background: linear-gradient(180deg, #060f1e 0%, var(--bg) 100%);
+  }
+
+  .logo {
+    font-family: 'Courier New', Courier, 'Lucida Console', monospace;
+    font-weight: 900;
+    font-size: 1.1rem;
+    letter-spacing: 0.15em;
+    color: var(--green);
+    text-shadow: 0 0 20px var(--green), 0 0 40px rgba(0,170,255,0.3);
+  }
+
+  .logo span { color: var(--text-dim); font-weight: 400; }
+
+  .header-meta {
+    margin-left: auto;
+    display: flex;
+    gap: 20px;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+
+  .status-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green-dim);
+    margin-right: 6px;
+    animation: blink 2s infinite;
+  }
+  .status-dot.active { background: var(--green); box-shadow: 0 0 6px var(--green); animation: none; }
+
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+  .workspace {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr auto;
+    gap: 0;
+    height: calc(100vh - 61px);
+  }
+
+  #drop-panel { grid-column: 1; grid-row: 1 / 3; }
+  #hex-panel  { grid-column: 2; grid-row: 1 / 3; }
+
+  .panel {
+    border: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    background: #060c1a;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .panel-title {
+    font-family: 'Courier New', Courier, 'Lucida Console', monospace;
+    font-size: 0.62rem;
+    letter-spacing: 0.2em;
+    color: var(--green-dim);
+    text-transform: uppercase;
+  }
+
+  .panel-badge {
+    margin-left: auto;
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+
+  /* ── DROP ZONE ── */
+  #drop-panel {
+    display: flex;
+    flex-direction: column;
+  }
+
+  #drop-zone {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s;
+    position: relative;
+    min-height: 200px;
+  }
+
+  #drop-zone:hover, #drop-zone.drag-over {
+    background: rgba(0,170,255,0.08);
+  }
+
+  #drop-zone.has-image { cursor: default; padding: 0; }
+
+  .drop-prompt {
+    text-align: center;
+    pointer-events: none;
+  }
+
+  .drop-icon {
+    font-size: 3rem;
+    margin-bottom: 16px;
+    opacity: 0.4;
+    display: block;
+  }
+
+  .drop-title {
+    font-family: 'Courier New', Courier, 'Lucida Console', monospace;
+    font-size: 0.8rem;
+    letter-spacing: 0.2em;
+    color: var(--green-dim);
+    margin-bottom: 8px;
+  }
+
+  .drop-sub {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+
+  #file-input { display: none; }
+
+  #preview-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: none;
+    image-rendering: pixelated;
+    padding: 12px;
+  }
+
+  /* ── CONTROLS BAR ── */
+  .controls-bar {
+    border-top: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    background: #060c1a;
+  }
+
+  .btn {
+    font-family: 'Courier New', Courier, 'Lucida Console', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    background: transparent;
+    border: 1px solid var(--green-dim);
+    color: var(--green);
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-transform: uppercase;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn:hover:not(:disabled) {
+    background: var(--green-glow);
+    border-color: var(--green);
+    box-shadow: 0 0 12px rgba(0,170,255,0.2);
+  }
+
+  .btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  .btn.danger { border-color: #552233; color: var(--red); }
+  .btn.danger:hover:not(:disabled) { background: rgba(255,51,85,0.1); border-color: var(--red); }
+
+  .btn.primary {
+    border-color: var(--green);
+    box-shadow: 0 0 8px rgba(0,170,255,0.15);
+  }
+
+  .file-info {
+    font-size: 0.62rem;
+    color: var(--text-dim);
+    margin-left: auto;
+    letter-spacing: 0.05em;
+  }
+
+  /* ── HEX EDITOR ── */
+  #hex-panel {
+    grid-column: 2;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .hex-toolbar {
+    border-bottom: 1px solid var(--border);
+    padding: 8px 16px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-shrink: 0;
+    background: #060c1a;
+    flex-wrap: wrap;
+  }
+
+  .qtable-selector {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .qt-label {
+    font-size: 0.62rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    margin-right: 4px;
+  }
+
+  .qt-tab {
+    font-family: 'Courier New', Courier, 'Lucida Console', monospace;
+    font-size: 0.62rem;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 10px;
+    cursor: pointer;
+    letter-spacing: 0.1em;
+    transition: all 0.15s;
+  }
+
+  .qt-tab.active {
+    border-color: var(--green-dim);
+    color: var(--green);
+    background: var(--green-glow);
+  }
+
+  .hex-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .hex-content::-webkit-scrollbar { width: 6px; }
+  .hex-content::-webkit-scrollbar-track { background: var(--bg); }
+  .hex-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    gap: 10px;
+    text-align: center;
+  }
+
+  .empty-state .e-icon { font-size: 2rem; opacity: 0.3; }
+
+  /* ── QTABLE BLOCK ── */
+  .qtable-block { display: flex; flex-direction: column; gap: 10px; }
+
+  .qtable-block-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .qtable-id {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.65rem;
+    color: var(--amber);
+    letter-spacing: 0.15em;
+  }
+
+  .qtable-type {
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+  }
+
+  .offset-display {
+    margin-left: auto;
+    font-size: 0.58rem;
+    color: var(--text-dim);
+  }
+
+  /* hex grid: 9x9 */
+  .hex-grid {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    gap: 3px;
+  }
+
+  .hex-cell {
+    position: relative;
+  }
+
+  .hex-cell input {
+    width: 100%;
+    font-family: 'Courier New', Courier, 'Lucida Console', monospace;
+    font-size: 0.72rem;
+    background: #060f20;
+    border: 1px solid #102040;
+    color: var(--green);
+    text-align: center;
+    padding: 5px 2px;
+    outline: none;
+    text-transform: uppercase;
+    transition: all 0.1s;
+    letter-spacing: 0.05em;
+  }
+
+  .hex-cell input:focus {
+    border-color: var(--green);
+    background: #081828;
+    box-shadow: 0 0 8px rgba(0,170,255,0.25);
+    color: #ffffff;
+    z-index: 2;
+    position: relative;
+  }
+
+  .hex-cell input.modified {
+    border-color: var(--amber);
+    color: var(--amber);
+    background: #1a1000;
+  }
+
+  .hex-cell input.invalid {
+    border-color: var(--red);
+    color: var(--red);
+    background: #1a0008;
+  }
+
+  .cell-index {
+    font-size: 0.45rem;
+    color: var(--text-dim);
+    text-align: center;
+    margin-top: 2px;
+    letter-spacing: 0.05em;
+  }
+
+  /* ── CHROMA CELLS (66th onwards) ── */
+  .hex-cell.chroma input {
+    background: #1a0008;
+    border: 1px solid #401020;
+    color: var(--red);
+  }
+
+  .hex-cell.chroma input:focus {
+    border-color: var(--red);
+    background: #2a0010;
+    box-shadow: 0 0 8px rgba(255,51,85,0.25);
+    color: #ffffff;
+  }
+
+  .hex-cell.chroma input.modified {
+    border-color: var(--amber);
+    color: var(--amber);
+    background: #1a1000;
+  }
+
+  .hex-cell.chroma input.invalid {
+    border-color: #ff6600;
+    color: #ff6600;
+    background: #1a0800;
+  }
+
+  .hex-cell.chroma .cell-index {
+    color: #552233;
+  }
+
+  /* 8x8 zigzag visualization */
+  .zigzag-viz {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 2px;
+  }
+
+  .zz-cell {
+    aspect-ratio: 1;
+    border-radius: 1px;
+    transition: background 0.2s;
+  }
+
+  /* ── ACTION ROW ── */
+  .action-row {
+    border-top: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-shrink: 0;
+    background: #060c1a;
+    flex-wrap: wrap;
+  }
+
+  .glitch-presets {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .preset-label {
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    margin-right: 2px;
+  }
+
+  .preset-btn {
+    font-family: 'Courier New', Courier, 'Lucida Console', monospace;
+    font-size: 0.6rem;
+    background: transparent;
+    border: 1px solid #1a3320;
+    color: var(--text-dim);
+    padding: 4px 8px;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    transition: all 0.15s;
+    text-transform: uppercase;
+  }
+
+  .preset-btn:hover:not(:disabled) {
+    border-color: var(--green-dim);
+    color: var(--green);
+  }
+
+  .preset-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .raw-hex-section {
+    border-top: 1px solid var(--border);
+    padding: 10px 16px;
+    flex-shrink: 0;
+    background: #03060f;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .raw-hex-section::-webkit-scrollbar { width: 4px; }
+  .raw-hex-section::-webkit-scrollbar-thumb { background: var(--border); }
+
+  .raw-hex-label {
+    font-size: 0.55rem;
+    color: var(--text-dim);
+    letter-spacing: 0.12em;
+    margin-bottom: 6px;
+  }
+
+  .raw-hex-bytes {
+    font-size: 0.6rem;
+    color: #205080;
+    line-height: 1.8;
+    word-break: break-all;
+    letter-spacing: 0.05em;
+  }
+
+  .raw-hex-bytes .hl { color: var(--amber); }
+
+  /* notifications */
+  .notif {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(60px);
+    background: #060c1a;
+    border: 1px solid var(--green);
+    color: var(--green);
+    padding: 8px 20px;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    box-shadow: 0 0 20px rgba(0,170,255,0.2);
+    transition: transform 0.3s ease;
+    z-index: 10000;
+  }
+
+  .notif.show { transform: translateX(-50%) translateY(0); }
+  .notif.error { border-color: var(--red); color: var(--red); }
+
+  /* number input only */
+  .hex-cell input[type=text] { -moz-appearance: textfield; }
+  /* ── ASPECT RATIO GLITCH PANEL ── */
+  .dim-body {
+    padding: 14px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .dim-info {
+    font-size: 0.58rem;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+    line-height: 1.6;
+    max-width: 700px;
+  }
+  .dim-fields {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .dim-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .dim-label {
+    font-size: 0.6rem;
+    letter-spacing: 0.18em;
+    color: var(--text-dim);
+    min-width: 48px;
+  }
+  .dim-bytes {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .dim-byte-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+  .dim-byte-lbl {
+    font-size: 0.5rem;
+    color: var(--text-dim);
+    letter-spacing: 0.12em;
+  }
+  .dim-inp {
+    width: 38px;
+    font-family: 'Courier New', Courier, 'Lucida Console', monospace;
+    font-size: 0.8rem;
+    background: #060f20;
+    border: 1px solid #102040;
+    color: var(--green);
+    text-align: center;
+    padding: 5px 4px;
+    outline: none;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    transition: all 0.1s;
+  }
+  .dim-inp:focus {
+    border-color: var(--green);
+    background: #081828;
+    box-shadow: 0 0 8px rgba(0,170,255,0.25);
+    color: #fff;
+  }
+  .dim-inp.modified { border-color: var(--amber); color: var(--amber); background: #1a1000; }
+  .dim-inp:disabled { opacity: 0.3; cursor: not-allowed; }
+  .dim-dec {
+    font-size: 0.65rem;
+    color: var(--green-dim);
+    letter-spacing: 0.08em;
+    min-width: 52px;
+  }
+  .dim-separator {
+    font-size: 1.2rem;
+    color: var(--text-dim);
+    padding: 0 4px;
+    margin-top: 14px;
+  }
+  .dim-offset {
+    font-size: 0.52rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">QTABLE<span>//</span>GLITCH</div>
+  <div style="font-size:0.6rem;color:var(--text-dim);letter-spacing:0.1em">JPEG QUANTISATION TABLE HEX EDITOR</div>
+  <div class="header-meta">
+    <span><span class="status-dot" id="status-dot"></span><span id="status-text">AWAITING INPUT</span></span>
+    <span id="header-tables">TABLES: —</span>
+  </div>
+</header>
+
+<div class="workspace">
+
+  <!-- LEFT: Image Preview -->
+  <div class="panel" id="drop-panel">
+    <div class="panel-header">
+      <div class="panel-title">IMAGE PREVIEW</div>
+      <div class="panel-badge" id="img-dims">—</div>
+    </div>
+    <div id="drop-zone">
+      <div class="drop-prompt" id="drop-prompt">
+        <span class="drop-icon">⬡</span>
+        <div class="drop-title">LOAD JPEG</div>
+        <div class="drop-sub">DRAG &amp; DROP OR CLICK TO SELECT</div>
+        <div class="drop-sub" style="margin-top:8px;font-size:0.55rem">.JPG / .JPEG ONLY</div>
+      </div>
+      <img id="preview-img" alt="Preview" />
+    </div>
+    <div class="controls-bar">
+      <button class="btn danger" id="btn-reset" disabled onclick="resetAll()">RESET</button>
+      <div class="file-info" id="file-info">NO FILE LOADED</div>
+    </div>
+    <input type="file" id="file-input" accept=".jpg,.jpeg,image/jpeg">
+  </div>
+
+  <!-- RIGHT: Hex Editor -->
+  <div class="panel" id="hex-panel">
+    <div class="panel-header">
+      <div class="panel-title">QUANTISATION TABLE EDITOR</div>
+      <div class="panel-badge" id="hex-badge">—</div>
+    </div>
+
+
+
+    <div class="hex-content" id="hex-content">
+      <div class="empty-state" id="empty-state">
+        <span class="e-icon">◈</span>
+        <span>LOAD A JPEG TO INSPECT<br>QUANTISATION TABLES</span>
+      </div>
+    </div>
+
+    <div class="action-row">
+      <button class="btn primary" id="btn-download" disabled onclick="downloadGlitched()">↓ DOWNLOAD GLITCHED JPEG</button>
+    </div>
+
+    <div class="raw-hex-section" id="raw-hex-section" style="display:none">
+      <div class="raw-hex-label">RAW BYTES // QUANTISATION TABLE REGION</div>
+      <div class="raw-hex-bytes" id="raw-hex-bytes"></div>
+    </div>
+
+    <!-- ASPECT RATIO GLITCH — embedded under cell grid, right panel -->
+    <div id="dim-panel" style="display:none;border-top:1px solid var(--border);flex-shrink:0;background:#060c1a;">
+      <div class="panel-header" style="background:#04091a;">
+        <div class="panel-title">ASPECT RATIO GLITCHING</div>
+        <div class="panel-badge" id="dim-badge">SOF FRAME HEADER</div>
+      </div>
+      <div class="dim-body">
+        <div class="dim-info">Editing the width/height bytes in the JPEG frame header warps the image geometry without re-encoding. Each dimension is stored as 2 bytes (big-endian).</div>
+        <div class="dim-fields">
+          <div class="dim-group">
+            <div class="dim-label">HEIGHT</div>
+            <div class="dim-bytes">
+              <div class="dim-byte-wrap">
+                <div class="dim-byte-lbl">HI</div>
+                <input class="dim-inp" id="dim-h-hi" type="text" maxlength="2" placeholder="00" />
+              </div>
+              <div class="dim-byte-wrap">
+                <div class="dim-byte-lbl">LO</div>
+                <input class="dim-inp" id="dim-h-lo" type="text" maxlength="2" placeholder="00" />
+              </div>
+              <div class="dim-dec" id="dim-h-dec">— px</div>
+            </div>
+          </div>
+          <div class="dim-separator">×</div>
+          <div class="dim-group">
+            <div class="dim-label">WIDTH</div>
+            <div class="dim-bytes">
+              <div class="dim-byte-wrap">
+                <div class="dim-byte-lbl">HI</div>
+                <input class="dim-inp" id="dim-w-hi" type="text" maxlength="2" placeholder="00" />
+              </div>
+              <div class="dim-byte-wrap">
+                <div class="dim-byte-lbl">LO</div>
+                <input class="dim-inp" id="dim-w-lo" type="text" maxlength="2" placeholder="00" />
+              </div>
+              <div class="dim-dec" id="dim-w-dec">— px</div>
+            </div>
+          </div>
+        </div>
+        <div class="dim-offset" id="dim-offset-info"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="notif" id="notif"></div>
+
+<script>
+// ─────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────
+let originalBytes = null;
+let workingBytes = null;
+let qtables = [];
+let sofInfo = null;   // { heightOffset, widthOffset }
+let fileName = '';
+let previewUrl = null;
+
+// Always target the chrominance table (QT ID 1), fallback to last table found
+function getChromaIdx() {
+  const idx = qtables.findIndex(qt => qt.id === 1);
+  return idx !== -1 ? idx : qtables.length - 1;
+}
+
+// ─────────────────────────────────────────────
+// DRAG & DROP + FILE INPUT
+// ─────────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => { if (!originalBytes) fileInput.click(); });
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+function handleFile(file) {
+  if (!file.type.match(/jpeg|jpg/i) && !file.name.match(/\.(jpg|jpeg)$/i)) {
+    notify('JPEG FILES ONLY', true); return;
+  }
+  fileName = file.name;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const buf = new Uint8Array(e.target.result);
+    if (buf[0] !== 0xFF || buf[1] !== 0xD8) { notify('NOT A VALID JPEG', true); return; }
+    originalBytes = buf;
+    workingBytes = new Uint8Array(buf);
+    parseQTables();
+    parseSof();
+    showPreview(buf);
+    updateUI();
+    notify('JPEG LOADED — ' + qtables.length + ' QUANTISATION TABLE(S) FOUND');
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ─────────────────────────────────────────────
+// JPEG PARSING — find DQT segments
+// ─────────────────────────────────────────────
+function parseQTables() {
+  qtables = [];
+  const d = workingBytes;
+  let i = 2;
+  while (i < d.length - 1) {
+    if (d[i] !== 0xFF) { i++; continue; }
+    const marker = d[i + 1];
+    if (marker === 0xD9 || marker === 0xDA) break; // EOI or SOS
+    if (i + 3 >= d.length) break;
+    const segLen = (d[i + 2] << 8) | d[i + 3]; // includes the 2-byte length field
+    if (marker === 0xDB) {
+      // DQT segment — may contain multiple tables
+      let j = i + 4; // skip marker + length
+      const segEnd = i + 2 + segLen;
+      while (j < segEnd && j < d.length) {
+        const qtInfo = d[j];
+        const precision = (qtInfo >> 4) & 0xF; // 0=8bit, 1=16bit
+        const tableId   = qtInfo & 0xF;
+        const tableLen  = precision === 0 ? 64 : 128;
+        const dataStart = j + 1;
+        if (dataStart + tableLen > d.length) break;
+        qtables.push({
+          id: tableId,
+          precision,
+          markerOffset: i,
+          offset: j,           // byte offset of the Pq/Tq byte
+          dataOffset: dataStart,
+          length: tableLen,
+          original: d.slice(dataStart, dataStart + tableLen)
+        });
+        j += 1 + tableLen;
+      }
+    }
+    i += 2 + segLen;
+  }
+}
+
+// ─────────────────────────────────────────────
+// JPEG PARSING — find SOF segment (frame header)
+// ─────────────────────────────────────────────
+function parseSof() {
+  sofInfo = null;
+  const d = workingBytes;
+  let i = 2;
+  while (i < d.length - 3) {
+    if (d[i] !== 0xFF) { i++; continue; }
+    const marker = d[i + 1];
+    // SOF markers: C0-C3, C5-C7, C9-CB, CD-CF (but not C4=DHT, C8=JPG, CC=DAC)
+    const isSOF = (marker >= 0xC0 && marker <= 0xC3) ||
+                  (marker >= 0xC5 && marker <= 0xC7) ||
+                  (marker >= 0xC9 && marker <= 0xCB) ||
+                  (marker >= 0xCD && marker <= 0xCF);
+    if (isSOF) {
+      // SOF layout: FF Cx [len_hi len_lo] [precision] [height_hi height_lo] [width_hi width_lo] ...
+      const heightOffset = i + 5;  // after marker(2) + length(2) + precision(1)
+      const widthOffset  = i + 7;
+      if (widthOffset + 1 < d.length) {
+        sofInfo = { heightOffset, widthOffset, markerOffset: i, marker };
+      }
+      break;
+    }
+    if (i + 3 >= d.length) break;
+    const segLen = (d[i + 2] << 8) | d[i + 3];
+    if (segLen < 2) break;
+    i += 2 + segLen;
+  }
+}
+
+
+// ─────────────────────────────────────────────
+function showPreview(bytes) {
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  const blob = new Blob([bytes], { type: 'image/jpeg' });
+  previewUrl = URL.createObjectURL(blob);
+  const img = document.getElementById('preview-img');
+  img.src = previewUrl;
+  img.style.display = 'block';
+  document.getElementById('drop-prompt').style.display = 'none';
+  dropZone.classList.add('has-image');
+  img.onload = () => {
+    document.getElementById('img-dims').textContent = img.naturalWidth + '×' + img.naturalHeight + 'px';
+  };
+}
+
+// ─────────────────────────────────────────────
+// UI UPDATE
+// ─────────────────────────────────────────────
+function updateUI() {
+  const hasFile = !!originalBytes;
+  const hasTables = qtables.length > 0;
+
+  document.getElementById('btn-reset').disabled = !hasFile;
+  document.getElementById('btn-download').disabled = !hasTables;
+
+  document.getElementById('file-info').textContent =
+    hasFile ? (fileName + ' · ' + (originalBytes.length / 1024).toFixed(1) + 'KB') : 'NO FILE LOADED';
+
+  const dot = document.getElementById('status-dot');
+  const txt = document.getElementById('status-text');
+  dot.className = 'status-dot' + (hasFile ? ' active' : '');
+  txt.textContent = hasFile ? 'FILE LOADED' : 'AWAITING INPUT';
+  document.getElementById('header-tables').textContent =
+    'TABLES: ' + (hasTables ? qtables.length : '—');
+
+  document.getElementById('hex-badge').textContent =
+    hasTables ? (qtables.length + ' DQT SEGMENT(S) · ' + (originalBytes.length) + ' BYTES') : '—';
+
+  renderActiveTable();
+  updateDimPanel();
+}
+
+// ─────────────────────────────────────────────
+// DIM PANEL
+// ─────────────────────────────────────────────
+function updateDimPanel() {
+  const panel = document.getElementById('dim-panel');
+  if (!sofInfo) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  const d = workingBytes;
+  const hHi = d[sofInfo.heightOffset];
+  const hLo = d[sofInfo.heightOffset + 1];
+  const wHi = d[sofInfo.widthOffset];
+  const wLo = d[sofInfo.widthOffset + 1];
+  const origD = originalBytes;
+  const origHHi = origD[sofInfo.heightOffset];
+  const origHLo = origD[sofInfo.heightOffset + 1];
+  const origWHi = origD[sofInfo.widthOffset];
+  const origWLo = origD[sofInfo.widthOffset + 1];
+
+  setDimInput('dim-h-hi', hHi, origHHi);
+  setDimInput('dim-h-lo', hLo, origHLo);
+  setDimInput('dim-w-hi', wHi, origWHi);
+  setDimInput('dim-w-lo', wLo, origWLo);
+
+  updateDimDecimals();
+
+  document.getElementById('dim-offset-info').textContent =
+    'HEIGHT OFFSET: 0x' + sofInfo.heightOffset.toString(16).toUpperCase().padStart(6,'0') +
+    '  ·  WIDTH OFFSET: 0x' + sofInfo.widthOffset.toString(16).toUpperCase().padStart(6,'0') +
+    '  ·  MARKER: FF ' + sofInfo.marker.toString(16).toUpperCase();
+}
+
+function setDimInput(id, val, origVal) {
+  const inp = document.getElementById(id);
+  const hex = val.toString(16).padStart(2,'0').toUpperCase();
+  const origHex = origVal.toString(16).padStart(2,'0').toUpperCase();
+  inp.value = hex;
+  inp.dataset.orig = origHex;
+  inp.className = 'dim-inp' + (hex !== origHex ? ' modified' : '');
+  // Wire input event once (check for flag)
+  if (!inp.dataset.wired) {
+    inp.dataset.wired = '1';
+    inp.addEventListener('input', function() {
+      const v = this.value.replace(/[^0-9a-fA-F]/g,'').toUpperCase();
+      this.value = v;
+      if (v.length === 2) {
+        const byte = parseInt(v, 16);
+        const offset = getOffsetForDimInput(this.id);
+        if (offset !== null) workingBytes[offset] = byte;
+        this.className = 'dim-inp' + (v !== this.dataset.orig ? ' modified' : '');
+        updateDimDecimals();
+        showPreview(workingBytes);
+      }
+    });
+  }
+}
+
+function getOffsetForDimInput(id) {
+  if (!sofInfo) return null;
+  if (id === 'dim-h-hi') return sofInfo.heightOffset;
+  if (id === 'dim-h-lo') return sofInfo.heightOffset + 1;
+  if (id === 'dim-w-hi') return sofInfo.widthOffset;
+  if (id === 'dim-w-lo') return sofInfo.widthOffset + 1;
+  return null;
+}
+
+function updateDimDecimals() {
+  if (!sofInfo) return;
+  const d = workingBytes;
+  const h = (d[sofInfo.heightOffset] << 8) | d[sofInfo.heightOffset + 1];
+  const w = (d[sofInfo.widthOffset]  << 8) | d[sofInfo.widthOffset  + 1];
+  document.getElementById('dim-h-dec').textContent = h + ' px';
+  document.getElementById('dim-w-dec').textContent = w + ' px';
+}
+// ─────────────────────────────────────────────
+const ZIGZAG = [
+   0, 1, 5, 6,14,15,27,28,
+   2, 4, 7,13,16,26,29,42,
+   3, 8,12,17,25,30,41,43,
+   9,11,18,24,31,40,44,53,
+  10,19,23,32,39,45,52,54,
+  20,22,33,38,46,51,55,60,
+  21,34,37,47,50,56,59,61,
+  35,36,48,49,57,58,62,63
+];
+
+function buildCellData() {
+  // Returns array of { fileOffset, byteVal, origVal, isChroma }
+  // Single QT: 81-byte 9x9 window starting from the table's data (original behaviour)
+  // Multiple QTs: exact bytes from each table in id order, properly split by length
+  const cells = [];
+  if (qtables.length === 1) {
+    const qt = qtables[0];
+    const count = Math.min(81, workingBytes.length - qt.dataOffset);
+    for (let i = 0; i < count; i++) {
+      cells.push({
+        fileOffset: qt.dataOffset + i,
+        byteVal:    workingBytes[qt.dataOffset + i],
+        origVal:    originalBytes[qt.dataOffset + i],
+        isChroma:   i >= 65
+      });
+    }
+  } else {
+    // Sort tables by their id so luma (0) always comes before chroma (1)
+    const sorted = [...qtables].sort((a, b) => a.id - b.id);
+    sorted.forEach(qt => {
+      for (let i = 0; i < qt.length; i++) {
+        cells.push({
+          fileOffset: qt.dataOffset + i,
+          byteVal:    workingBytes[qt.dataOffset + i],
+          origVal:    originalBytes[qt.dataOffset + i],
+          isChroma:   qt.id !== 0
+        });
+      }
+    });
+  }
+  return cells;
+}
+
+function renderActiveTable() {
+  const content = document.getElementById('hex-content');
+  const emptyState = document.getElementById('empty-state');
+  if (!qtables.length) {
+    emptyState.style.display = 'flex';
+    content.innerHTML = '';
+    content.appendChild(emptyState);
+    document.getElementById('raw-hex-section').style.display = 'none';
+    return;
+  }
+  emptyState.style.display = 'none';
+
+  const cells = buildCellData();
+  const count = cells.length;
+  const multiTable = qtables.length > 1;
+  const qt0 = qtables.find(q => q.id === 0) || qtables[0];
+  const is16 = qt0.precision === 1;
+
+  content.innerHTML = '';
+
+  const block = document.createElement('div');
+  block.className = 'qtable-block';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'qtable-block-header';
+  const tableDesc = multiTable
+    ? `${qtables.length} TABLES · ${is16 ? '16-BIT' : '8-BIT'} · LUMA (BLUE) + CHROMA (RED) · ${count} BYTES TOTAL`
+    : `${is16 ? '16-BIT' : '8-BIT'} · QT ID ${qt0.id} · ${count} BYTES`;
+  hdr.innerHTML = `
+    <span class="qtable-id">${multiTable ? 'LUMA + CHROMA TABLES' : 'QUANTISATION TABLE'}</span>
+    <span class="qtable-type">${tableDesc}</span>
+    <span class="offset-display">DATA: 0x${qt0.dataOffset.toString(16).toUpperCase().padStart(6,'0')}</span>
+  `;
+  block.appendChild(hdr);
+
+  const grid = document.createElement('div');
+  grid.className = 'hex-grid';
+
+  cells.forEach((cell, i) => {
+    const cellWrap = document.createElement('div');
+    cellWrap.className = 'hex-cell' + (cell.isChroma ? ' chroma' : '');
+
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.maxLength = 2;
+    inp.value = cell.byteVal.toString(16).padStart(2,'0').toUpperCase();
+    if (cell.byteVal !== cell.origVal) inp.classList.add('modified');
+    inp.dataset.index = i;
+    inp.dataset.orig = cell.origVal.toString(16).padStart(2,'0').toUpperCase();
+    inp.dataset.fileOffset = cell.fileOffset;
+
+    inp.addEventListener('input', function() {
+      const v = this.value.replace(/[^0-9a-fA-F]/g,'');
+      this.value = v.toUpperCase();
+      if (v.length === 2) {
+        workingBytes[parseInt(this.dataset.fileOffset)] = parseInt(v, 16);
+        this.classList.remove('invalid','modified');
+        if (v.toUpperCase() !== this.dataset.orig) this.classList.add('modified');
+        updateRawHex();
+        showPreview(workingBytes);
+      } else if (v.length > 0) {
+        this.classList.add('invalid');
+      }
+    });
+
+    inp.addEventListener('keydown', function(e) {
+      const idx = parseInt(this.dataset.index);
+      let next = null;
+      if (e.key === 'ArrowRight') next = idx + 1;
+      if (e.key === 'ArrowLeft')  next = idx - 1;
+      if (e.key === 'ArrowDown')  next = idx + 9;
+      if (e.key === 'ArrowUp')    next = idx - 9;
+      if (next !== null && next >= 0 && next < count) {
+        e.preventDefault();
+        grid.querySelectorAll('input')[next].focus();
+      }
+    });
+
+    cellWrap.appendChild(inp);
+    const lbl = document.createElement('div');
+    lbl.className = 'cell-index';
+    lbl.textContent = i.toString().padStart(2,'0');
+    cellWrap.appendChild(lbl);
+    grid.appendChild(cellWrap);
+  });
+
+  block.appendChild(grid);
+  content.appendChild(block);
+
+  document.getElementById('raw-hex-section').style.display = 'block';
+  updateRawHex();
+}
+
+function updateRawHex() {
+  if (!qtables.length) return;
+  const cells = buildCellData();
+  let html = '';
+  cells.forEach((cell, i) => {
+    const b = workingBytes[cell.fileOffset];
+    const o = originalBytes[cell.fileOffset];
+    const h = b.toString(16).padStart(2,'0').toUpperCase();
+    html += b !== o ? `<span class="hl">${h}</span> ` : `${h} `;
+    if ((i + 1) % 16 === 0) html += '<br>';
+  });
+  document.getElementById('raw-hex-bytes').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+// APPLY & DOWNLOAD
+// ─────────────────────────────────────────────
+function applyAndRender() {
+  // Re-read all cells in case of partial edits
+  const inputs = document.querySelectorAll('.hex-cell input');
+  if (!inputs.length) return;
+  const qt = qtables[activeTableIdx];
+  inputs.forEach(inp => {
+    const i = parseInt(inp.dataset.index);
+    const v = inp.value;
+    if (/^[0-9a-fA-F]{2}$/.test(v)) {
+      const parsed = parseInt(v, 16);
+      if (qt.precision === 1) {
+        workingBytes[qt.dataOffset + i*2]     = (parsed >> 8) & 0xFF;
+        workingBytes[qt.dataOffset + i*2 + 1] =  parsed & 0xFF;
+      } else {
+        workingBytes[qt.dataOffset + i] = parsed;
+      }
+    }
+  });
+  showPreview(workingBytes);
+  notify('CHANGES APPLIED TO PREVIEW');
+}
+
+function downloadGlitched() {
+  if (!workingBytes) return;
+  const blob = new Blob([workingBytes], { type: 'image/jpeg' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const base = fileName.replace(/\.(jpg|jpeg)$/i,'');
+  a.href = url;
+  a.download = base + '_glitched.jpg';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  notify('DOWNLOADING GLITCHED JPEG');
+}
+
+// ─────────────────────────────────────────────
+// PRESETS
+// ─────────────────────────────────────────────
+function setTableValues(valueFn) {
+  if (!qtables.length) return;
+  const qt = qtables[getChromaIdx()];
+  const is16 = qt.precision === 1;
+  for (let i = 0; i < 64; i++) {
+    const v = Math.max(0, Math.min(is16 ? 0xFFFF : 0xFF, valueFn(i)));
+    if (is16) {
+      workingBytes[qt.dataOffset + i*2]     = (v >> 8) & 0xFF;
+      workingBytes[qt.dataOffset + i*2 + 1] =  v & 0xFF;
+    } else {
+      workingBytes[qt.dataOffset + i] = v;
+    }
+  }
+  renderActiveTable();
+  showPreview(workingBytes);
+}
+
+// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// RESET
+// ─────────────────────────────────────────────
+function resetAll() {
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  originalBytes = null;
+  workingBytes  = null;
+  qtables = [];
+  sofInfo = null;
+  fileName = '';
+  previewUrl = null;
+  document.getElementById('preview-img').style.display = 'none';
+  document.getElementById('preview-img').src = '';
+  document.getElementById('drop-prompt').style.display = '';
+  dropZone.classList.remove('has-image');
+  document.getElementById('img-dims').textContent = '—';
+  document.getElementById('hex-content').innerHTML = '';
+  const emptyState = document.createElement('div');
+  emptyState.id = 'empty-state';
+  emptyState.className = 'empty-state';
+  emptyState.innerHTML = '<span class="e-icon">◈</span><span>LOAD A JPEG TO INSPECT<br>QUANTISATION TABLES</span>';
+  document.getElementById('hex-content').appendChild(emptyState);
+  document.getElementById('raw-hex-section').style.display = 'none';
+  fileInput.value = '';
+  updateUI();
+}
+
+// ─────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────
+let notifTimer = null;
+function notify(msg, isError = false) {
+  const el = document.getElementById('notif');
+  el.textContent = msg;
+  el.className = 'notif' + (isError ? ' error' : '') + ' show';
+  clearTimeout(notifTimer);
+  notifTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+</script>
+</body>
+</html>
