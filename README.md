@@ -1,4 +1,4 @@
-# QTABLE // JPEG HEX GLITCH EDITOR
+# JPG/JPEG IMAGE HEX TABLE EDITOR
 
 A browser-based tool for glitching JPEG images by directly editing their internal data — no re-encoding, no quality loss, just raw byte manipulation.
 
