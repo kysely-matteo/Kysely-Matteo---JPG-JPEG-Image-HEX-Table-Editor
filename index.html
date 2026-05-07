@@ -690,16 +690,32 @@
       <div class="panel-badge" id="hex-badge">—</div>
     </div>
 
-
-
+    <div id="qt-readme" style="border-bottom:1px solid var(--border);padding:10px 16px;background:#04091a;flex-shrink:0;">
+      <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.7;letter-spacing:0.06em;max-width:680px;">
+        JPEG compression works by breaking the image into 8×8 pixel blocks and running a <span style="color:var(--green)">Discrete Cosine Transform (DCT)</span> on each. The result is 64 frequency coefficients — low frequencies (top-left) carry broad shapes; high frequencies (bottom-right) carry fine detail. Each coefficient is then <span style="color:var(--amber)">divided by the corresponding quantisation table value</span> and rounded, discarding precision. Higher table values = more data thrown away = more artefacts. Editing these bytes post-encode corrupts the decoder's reconstruction math — the image re-interprets the same compressed data under your new table, producing glitch.
+        <span style="color:#204060;margin-left:8px;">// LUMA TABLE (blue) affects brightness · CHROMA (red) affects colour</span>
+      </div>
+    </div>
     <div class="hex-content" id="hex-content">
       <div class="empty-state" id="empty-state">
-        <span class="e-icon">◈</span>
-        <span>LOAD A JPEG TO INSPECT<br>QUANTISATION TABLES</span>
+        <div style="max-width:340px;text-align:left;display:flex;flex-direction:column;gap:14px;">
+          <div style="font-size:0.75rem;letter-spacing:0.2em;color:var(--green-dim);border-bottom:1px solid var(--border);padding-bottom:8px;">◈ QTABLE // GLITCH EDITOR</div>
+          <div style="font-size:0.62rem;color:var(--text-dim);line-height:1.8;letter-spacing:0.06em;">
+            Every JPEG stores one or two <span style="color:var(--green)">quantisation tables (DQT)</span> — arrays of 64 coefficients that control how aggressively each frequency band is compressed during encoding.
+          </div>
+          <div style="font-size:0.62rem;color:var(--text-dim);line-height:1.8;letter-spacing:0.06em;">
+            This tool lets you <span style="color:var(--amber)">directly edit those bytes in hex</span>, then re-render the image in real time. Raising values crushes detail and creates blocky DCT artefacts. Lowering them sharpens — or breaks — the decode entirely.
+          </div>
+          <div style="font-size:0.62rem;color:var(--text-dim);line-height:1.8;letter-spacing:0.06em;">
+            Use <span style="color:var(--green)">RANDOM</span> to instantly corrupt the first 10 coefficients of both tables, or edit cells manually. Download the modified file as a new JPEG.
+          </div>
+          <div style="font-size:0.58rem;color:#204060;letter-spacing:0.12em;margin-top:4px;">→ DRAG &amp; DROP OR CLICK THE LEFT PANEL TO BEGIN</div>
+        </div>
       </div>
     </div>
 
     <div class="action-row">
+      <button class="btn" id="btn-random" disabled onclick="randomizeFirst10()" style="border-color:#3a2060;color:#aa66ff;" onmouseover="this.style.background='rgba(170,102,255,0.1)';this.style.borderColor='#aa66ff'" onmouseout="this.style.background='transparent';this.style.borderColor='#3a2060'">⚄ RANDOM</button>
       <button class="btn primary" id="btn-download" disabled onclick="downloadGlitched()">↓ DOWNLOAD GLITCHED JPEG</button>
     </div>
 
@@ -906,6 +922,7 @@ function updateUI() {
 
   document.getElementById('btn-reset').disabled = !hasFile;
   document.getElementById('btn-download').disabled = !hasTables;
+  document.getElementById('btn-random').disabled = !hasTables;
 
   document.getElementById('file-info').textContent =
     hasFile ? (fileName + ' · ' + (originalBytes.length / 1024).toFixed(1) + 'KB') : 'NO FILE LOADED';
@@ -1047,13 +1064,15 @@ function renderActiveTable() {
   const content = document.getElementById('hex-content');
   const emptyState = document.getElementById('empty-state');
   if (!qtables.length) {
-    emptyState.style.display = 'flex';
-    content.innerHTML = '';
-    content.appendChild(emptyState);
+    if (emptyState) {
+      emptyState.style.display = 'flex';
+      content.innerHTML = '';
+      content.appendChild(emptyState);
+    }
     document.getElementById('raw-hex-section').style.display = 'none';
     return;
   }
-  emptyState.style.display = 'none';
+  if (emptyState) emptyState.style.display = 'none';
 
   const cells = buildCellData();
   const count = cells.length;
@@ -1151,8 +1170,55 @@ function updateRawHex() {
 }
 
 // ─────────────────────────────────────────────
-// APPLY & DOWNLOAD
+// RANDOMIZE FIRST 10 VALUES — BOTH TABLES
 // ─────────────────────────────────────────────
+function randomizeFirst10() {
+  if (!qtables.length) return;
+  const lumaQt   = qtables.find(q => q.id === 0) || qtables[0];
+  const chromaQt = qtables.find(q => q.id === 1) || (qtables.length > 1 ? qtables[1] : null);
+
+  // Formula: current ± current (coin flip doubles or zeroes), then ±(0–5) jitter, clamped 1–255
+  function nudge(current) {
+    const scaled  = Math.random() < 0.5 ? current * 2 : 0;
+    const jitter  = Math.floor(Math.random() * 11) - 5; // -5 to +5
+    return Math.max(1, Math.min(255, scaled + jitter));
+  }
+
+  function randomiseTable(qt) {
+    const is16 = qt.precision === 1;
+    for (let i = 0; i < 10; i++) {
+      const byteIdx = qt.dataOffset + (is16 ? i * 2 : i);
+      const current = workingBytes[byteIdx];
+      const newVal  = nudge(current);
+      if (is16) {
+        workingBytes[qt.dataOffset + i * 2]     = (newVal >> 8) & 0xFF;
+        workingBytes[qt.dataOffset + i * 2 + 1] =  newVal & 0xFF;
+      } else {
+        workingBytes[qt.dataOffset + i] = newVal;
+      }
+    }
+  }
+
+  randomiseTable(lumaQt);
+  if (chromaQt) randomiseTable(chromaQt);
+
+  // Patch existing input cells in-place (avoids full grid rebuild / null-emptyState crash)
+  const allInputs = document.querySelectorAll('.hex-cell input');
+  allInputs.forEach(inp => {
+    const fileOffset = parseInt(inp.dataset.fileOffset);
+    const newByte    = workingBytes[fileOffset];
+    const newHex     = newByte.toString(16).padStart(2, '0').toUpperCase();
+    inp.value = newHex;
+    inp.classList.remove('invalid');
+    inp.classList.toggle('modified', newHex !== inp.dataset.orig);
+  });
+
+  updateRawHex();
+  showPreview(workingBytes);
+  notify('RANDOMISED FIRST 10 — LUMA' + (chromaQt ? ' + CHROMA' : ''));
+}
+
+
 function applyAndRender() {
   // Re-read all cells in case of partial edits
   const inputs = document.querySelectorAll('.hex-cell input');
@@ -1229,7 +1295,7 @@ function resetAll() {
   const emptyState = document.createElement('div');
   emptyState.id = 'empty-state';
   emptyState.className = 'empty-state';
-  emptyState.innerHTML = '<span class="e-icon">◈</span><span>LOAD A JPEG TO INSPECT<br>QUANTISATION TABLES</span>';
+  emptyState.innerHTML = `<div style="max-width:340px;text-align:left;display:flex;flex-direction:column;gap:14px;"><div style="font-size:0.75rem;letter-spacing:0.2em;color:var(--green-dim);border-bottom:1px solid var(--border);padding-bottom:8px;">◈ QTABLE // GLITCH EDITOR</div><div style="font-size:0.62rem;color:var(--text-dim);line-height:1.8;letter-spacing:0.06em;">Every JPEG stores one or two <span style="color:var(--green)">quantisation tables (DQT)</span> — arrays of 64 coefficients controlling how aggressively each frequency band is compressed.</div><div style="font-size:0.62rem;color:var(--text-dim);line-height:1.8;letter-spacing:0.06em;">This tool lets you <span style="color:var(--amber)">directly edit those bytes in hex</span> and re-render in real time. Use <span style="color:var(--green)">RANDOM</span> to corrupt the first 10 coefficients of both tables.</div><div style="font-size:0.58rem;color:#204060;letter-spacing:0.12em;margin-top:4px;">→ DRAG &amp; DROP OR CLICK THE LEFT PANEL TO BEGIN</div></div>`;
   document.getElementById('hex-content').appendChild(emptyState);
   document.getElementById('raw-hex-section').style.display = 'none';
   fileInput.value = '';
